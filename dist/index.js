@@ -24,7 +24,7 @@ class Validators {
                 result = nextValidatorCall();
             }
             catch (err) {
-                result = err;
+                rej(err);
             }
             valResultToPromise(result, field)
                 .then(res)
@@ -209,14 +209,19 @@ module.exports.newRequestBodyValidator = function newRequestBodyValidator(schema
         throw new Error('Schema is required');
     }
     if (!onSuccess) {
-        onSuccess = function (req, res, next, ctx) {
-            req.body = ctx.root;
-            next();
+        onSuccess = function (req, res, next, result, ctx) {
+            if (result.success) {
+                req.body = ctx.root;
+                next();
+                return;
+            }
+            res.status(400).json(result.errors);
         };
     }
     if (!onError) {
-        onError = function (req, res, next, result, ctx) {
-            res.status(400).json(result.errors);
+        onError = function (req, res, next, err, ctx) {
+            console.error('Something went wrong: ' + err);
+            res.status(500);
         };
     }
     if (!config) {
@@ -237,8 +242,10 @@ module.exports.newRequestBodyValidator = function newRequestBodyValidator(schema
             response: response
         };
         _validateObject(context, schema, config)
-            .then(() => onSuccess(request, response, next, context))
-            .catch((errors) => onError(request, response, next, errors, context));
+            .then((result) => {
+            onSuccess(request, response, next, result, context);
+        })
+            .catch((err) => onError(request, response, next, err, context));
     };
 };
 function _validateObject(ctx, schema, config) {
@@ -276,11 +283,14 @@ function _validateObject(ctx, schema, config) {
         let i = 0, l = validations.length;
         let errors = {};
         validations.forEach(v => {
-            v.then(() => {
+            v.then((val) => {
                 i++;
+                if (val !== true) {
+                    errors[val.field] = val;
+                }
                 if (i >= l) {
                     if (Object.keys(errors).length) {
-                        rej({
+                        res({
                             success: false,
                             errors: errors
                         });
@@ -291,15 +301,7 @@ function _validateObject(ctx, schema, config) {
                         });
                     }
                 }
-            }).catch((err) => {
-                i++;
-                errors[err.field] = err;
-                if (i >= l)
-                    rej({
-                        success: false,
-                        errors: errors
-                    });
-            });
+            }).catch(rej);
         });
     });
 }
@@ -325,21 +327,18 @@ function valResultToPromise(valResult, field) {
         return valResult;
     }
     if (valResult instanceof Error) {
-        return Promise.reject({
-            field: field,
-            msg: valResult.message
-        });
+        return Promise.reject(valResult);
     }
     switch (typeof valResult) {
         case 'boolean':
             return valResult ?
                 Promise.resolve(true) :
-                Promise.reject({
+                Promise.resolve({
                     field: field,
                     msg: ''
                 });
         case 'string':
-            return Promise.reject({
+            return Promise.resolve({
                 field: field,
                 msg: valResult
             });

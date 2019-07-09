@@ -5,11 +5,11 @@ interface Context {
     root: any,
     current: any,
     path: string,
-    errors: { [name: string]: Error }
+    errors: { [name: string]: ValError }
     [name: string]: any
 }
 
-interface Error {
+interface ValError {
     field: string,
     msg: string
 }
@@ -48,21 +48,21 @@ interface SameAsOptions extends ValidatorOptions {
     path: string
 }
 
-interface ValidatorResult extends Promise<boolean | Error> {
+interface ValidatorResult extends Promise<boolean | ValError> {
 
 }
 
 interface ValidationResult {
     success: boolean
-    errors?: { [name: string]: Error }
+    errors?: { [name: string]: ValError }
 }
 
 interface OnRequestSuccess {
-    (request, response, next: () => void, context: Context): void
+    (request, response, next: () => void, result: ValidationResult, context: Context): void
 }
 
 interface OnRequestError {
-    (request, response, next: () => void, result: ValidationResult, context: Context): void
+    (request, response, next: () => void, error: any, context: Context): void
 }
 
 interface ValidatorConfig {
@@ -101,7 +101,7 @@ class Validators {
             try {
                 result = nextValidatorCall();
             } catch (err) {
-                result = err;
+                rej(err);
             }
 
             valResultToPromise(result, field)
@@ -322,14 +322,19 @@ module.exports.newRequestBodyValidator = function newRequestBodyValidator(
         throw new Error('Schema is required')
     }
     if (!onSuccess) {
-        onSuccess = function (req, res, next, ctx) {
-            req.body = ctx.root;
-            next();
+        onSuccess = function (req, res, next, result, ctx) {
+            if (result.success) {
+                req.body = ctx.root;
+                next();
+                return;
+            }
+            res.status(400).json(result.errors);
         };
     }
     if (!onError) {
-        onError = function (req, res, next, result, ctx) {
-            res.status(400).json(result.errors);
+        onError = function (req, res, next, err, ctx) {
+            console.error('Something went wrong: ' + err);
+            res.status(500);
         };
     }
     if (!config) {
@@ -353,8 +358,11 @@ module.exports.newRequestBodyValidator = function newRequestBodyValidator(
         };
 
         _validateObject(context, schema, config)
-            .then(() => onSuccess(request, response, next, context))
-            .catch((errors) => onError(request, response, next, errors, context));
+            .then((result) => {
+                onSuccess(request, response, next, result, context);
+                
+            })
+            .catch((err) => onError(request, response, next, err, context));
     };
 }
 
@@ -399,14 +407,22 @@ function _validateObject(ctx: Context, schema, config: ValidatorConfig): Promise
     }
 
     return new Promise((res, rej) => {
+        
         let i = 0, l = validations.length;
-        let errors: { [name: string]: Error } = {};
+        let errors: { [name: string]: ValError } = {};
+
         validations.forEach(v => {
-            v.then(() => {
+            v.then((val) => {
+                
                 i++;
+                
+                if (val !== true) {
+                    errors[(<ValError>val).field] = <ValError>val;
+                }
+
                 if (i >= l) {
                     if (Object.keys(errors).length) {
-                        rej({
+                        res({
                             success: false,
                             errors: errors
                         });
@@ -416,14 +432,7 @@ function _validateObject(ctx: Context, schema, config: ValidatorConfig): Promise
                         });
                     }
                 }
-            }).catch((err: Error) => {
-                i++;
-                errors[err.field] = err;
-                if (i >= l) rej({
-                    success: false,
-                    errors: errors
-                });
-            })
+            }).catch(rej);
         });
     });
 }
@@ -451,22 +460,19 @@ function valResultToPromise(valResult: any, field: string): ValidatorResult {
         return valResult;
     }
     if (valResult instanceof Error) {
-        return Promise.reject({
-            field: field,
-            msg: valResult.message
-        });
+        return Promise.reject(valResult);
     }
 
     switch (typeof valResult) {
         case 'boolean':
             return valResult ?
                 Promise.resolve(true) :
-                Promise.reject({
+                Promise.resolve({
                     field: field,
                     msg: ''
                 });
         case 'string':
-            return Promise.reject({
+            return Promise.resolve({
                 field: field,
                 msg: valResult
             });
