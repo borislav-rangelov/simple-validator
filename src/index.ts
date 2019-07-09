@@ -100,7 +100,7 @@ class validatorsImpl implements Validators {
                 if (i >= l) {
                     return true;
                 }
-                return this.validators[i++](ctx, value, field, nextValidatorCall);
+                return this.validators[i++](ctx, ctx.current[field], field, nextValidatorCall);
             };
 
             let result: any;

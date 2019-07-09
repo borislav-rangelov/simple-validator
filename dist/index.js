@@ -17,7 +17,7 @@ class validatorsImpl {
                 if (i >= l) {
                     return true;
                 }
-                return this.validators[i++](ctx, value, field, nextValidatorCall);
+                return this.validators[i++](ctx, ctx.current[field], field, nextValidatorCall);
             };
             let result;
             try {
@@ -32,9 +32,9 @@ class validatorsImpl {
         });
     }
     func(options) {
+        options = options || {};
+        reqOption(options.fnc, 'validation option fcn is required.');
         this.validator((ctx, value, field, next) => {
-            options = options || {};
-            reqOption(options.fnc, 'validation function is required.');
             // TODO handle options.msg
             return valResultToPromise(options.fnc(ctx, value, field, next), ctx.path);
         });
@@ -54,6 +54,18 @@ class validatorsImpl {
         options = options || {};
         this.validator(function (ctx, value, field, next) {
             if (value === undefined || value === null || typeof value === 'string') {
+                if (options.trim) {
+                    value = value.trim();
+                }
+                if (options.case) {
+                    if (options.case === 'upper') {
+                        value = value.toUpperCase();
+                    }
+                    else if (options.case === 'lower') {
+                        value = value.toLowerCase();
+                    }
+                }
+                ctx.current[field] = value;
                 return next();
             }
             return options.msg || ctx.path + ' must be a string.';
