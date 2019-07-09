@@ -1,7 +1,7 @@
 {
-  "name": "simple-validator",
+  "name": "@alderoy/simple-validator",
   "version": "0.0.1",
-  "description": "A basic validator for nodejs.",
+  "description": "A basic validator for nodejs and express.",
   "main": "dist/index.js",
   "scripts": {
     "clean": "rm -rf dist",
