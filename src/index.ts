@@ -21,7 +21,7 @@ interface Validator {
 interface Validators {
     func(options: FuncOptions): Validators,
     required(options: ValidatorOptions): Validators,
-    isString(options: ValidatorOptions): Validators,
+    isString(options: StringOptions): Validators,
     regex(options: RegexOptions): Validators,
     email(options: ValidatorOptions): Validators,
     password(options: PasswordOptions): Validators,
@@ -33,6 +33,12 @@ const _customValidators: { [name: string]: (opts: any) => Validator } = {};
 
 interface ValidatorOptions {
     msg?: string;
+}
+
+interface StringOptions extends ValidatorOptions {
+    trim?: boolean,
+    case?: string,
+    other?: (ctx: Context, value: string, field: string) => string
 }
 
 interface FuncOptions extends ValidatorOptions {
@@ -112,9 +118,9 @@ class validatorsImpl implements Validators {
     }
 
     func(options: FuncOptions): Validators {
+        options = options || <FuncOptions>{};
+        reqOption(options.fnc, 'validation option fcn is required.')
         this.validator((ctx, value, field, next) => {
-            options = options || <FuncOptions>{};
-            reqOption(options.fnc, 'validation function is required.')
             // TODO handle options.msg
             return valResultToPromise(
                 options.fnc(ctx, value, field, next),
@@ -135,10 +141,21 @@ class validatorsImpl implements Validators {
         return this;
     }
 
-    isString(options: ValidatorOptions): Validators {
+    isString(options: StringOptions): Validators {
         options = options || {};
-        this.validator(function (ctx, value, field, next) {
+        this.validator(function (ctx, value: string, field, next) {
             if (value === undefined || value === null || typeof value === 'string') {
+                if (options.trim) {
+                    value = value.trim();
+                }
+                if (options.case) {
+                    if (options.case === 'upper') {
+                        value = value.toUpperCase();
+                    } else if (options.case === 'lower') {
+                        value = value.toLowerCase();
+                    }
+                }
+                ctx.current[field] = value;
                 return next();
             }
             return options.msg || ctx.path + ' must be a string.';
