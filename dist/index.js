@@ -1,6 +1,6 @@
 module.exports = {};
 const _customValidators = {};
-class validatorsImpl {
+class Validators {
     constructor(customValidators) {
         this.validators = [];
         this.customValidators = customValidators;
@@ -54,6 +54,8 @@ class validatorsImpl {
         options = options || {};
         this.validator(function (ctx, value, field, next) {
             if (value === undefined || value === null || typeof value === 'string') {
+                if (!value)
+                    return next();
                 if (options.trim) {
                     value = value.trim();
                 }
@@ -175,14 +177,19 @@ class validatorsImpl {
     }
 }
 module.exports.checks = function checks() {
-    return new validatorsImpl(_customValidators);
+    return new Validators(_customValidators);
 };
 module.exports.registerCustomValidator = function registerCustomValidator(name, ctor) {
     _customValidators[name] = ctor;
 };
-module.exports.newObjectValidator = function newObjectValidator(schema) {
+module.exports.newObjectValidator = function newObjectValidator(schema, config) {
     if (!schema) {
         throw new Error('Schema is required');
+    }
+    if (!config) {
+        config = {
+            trimBody: true
+        };
     }
     return value => {
         if (!value) {
@@ -194,10 +201,10 @@ module.exports.newObjectValidator = function newObjectValidator(schema) {
             path: '',
             errors: {}
         };
-        return _validateObject(context, schema);
+        return _validateObject(context, schema, config);
     };
 };
-module.exports.newRequestBodyValidator = function newRequestBodyValidator(schema, onSuccess, onError) {
+module.exports.newRequestBodyValidator = function newRequestBodyValidator(schema, onSuccess, onError, config) {
     if (!schema) {
         throw new Error('Schema is required');
     }
@@ -212,6 +219,11 @@ module.exports.newRequestBodyValidator = function newRequestBodyValidator(schema
             res.status(400).json(result.errors);
         };
     }
+    if (!config) {
+        config = {
+            trimBody: true
+        };
+    }
     return (request, response, next) => {
         if (!request.body) {
             request.body = {};
@@ -224,12 +236,12 @@ module.exports.newRequestBodyValidator = function newRequestBodyValidator(schema
             request: request,
             response: response
         };
-        _validateObject(context, schema)
+        _validateObject(context, schema, config)
             .then(() => onSuccess(request, response, next, context))
             .catch((errors) => onError(request, response, next, errors, context));
     };
 };
-function _validateObject(ctx, schema) {
+function _validateObject(ctx, schema, config) {
     const validations = [];
     let keys = Object.keys(ctx.current);
     for (let field in schema) {
@@ -240,7 +252,7 @@ function _validateObject(ctx, schema) {
         let schemaVal = schema[field];
         if (!schemaVal)
             continue;
-        if (schemaVal instanceof validatorsImpl) {
+        if (schemaVal instanceof Validators) {
             let context = shallowCopy(ctx);
             context.path = context.path + field;
             let result;
@@ -256,7 +268,7 @@ function _validateObject(ctx, schema) {
         // to be implemented for nested objects and lists
         throw new Error('Not implemented');
     }
-    if (keys.length) {
+    if (config.trimBody && keys.length) {
         // found keys not in schema. removing from object
         keys.forEach(key => delete ctx.current[key]);
     }

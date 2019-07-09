@@ -14,22 +14,11 @@ interface Error {
     msg: string
 }
 
-interface Validator {
-    (ctx: Context, value: any, field: string, next: () => any): any;
+interface Validator<T> {
+    (ctx: Context, value: any, field: string, next: () => any): T;
 }
 
-interface Validators {
-    func(options: FuncOptions): Validators,
-    required(options: ValidatorOptions): Validators,
-    isString(options: StringOptions): Validators,
-    regex(options: RegexOptions): Validators,
-    email(options: ValidatorOptions): Validators,
-    password(options: PasswordOptions): Validators,
-    sameAs(options: SameAsOptions): Validators
-    custom(name: string, opts: any): Validators
-}
-
-const _customValidators: { [name: string]: (opts: any) => Validator } = {};
+const _customValidators: { [name: string]: (opts: any) => Validator<any> } = {};
 
 interface ValidatorOptions {
     msg?: string;
@@ -38,11 +27,11 @@ interface ValidatorOptions {
 interface StringOptions extends ValidatorOptions {
     trim?: boolean,
     case?: string,
-    other?: (ctx: Context, value: string, field: string) => string
+    other?: Validator<string>
 }
 
 interface FuncOptions extends ValidatorOptions {
-    fnc: Validator
+    fnc: Validator<any>
 }
 
 interface RegexOptions extends ValidatorOptions {
@@ -76,16 +65,20 @@ interface OnRequestError {
     (request, response, next: () => void, result: ValidationResult, context: Context): void
 }
 
-class validatorsImpl implements Validators {
+interface ValidatorConfig {
+    trimBody?: boolean
+}
 
-    private validators: Validator[] = [];
-    private customValidators: { [name: string]: (opts: any) => Validator };
+class Validators {
 
-    constructor(customValidators: { [name: string]: (opts: any) => Validator }) {
+    private validators: Validator<any>[] = [];
+    private customValidators: { [name: string]: (opts: any) => Validator<any> };
+
+    constructor(customValidators: { [name: string]: (opts: any) => Validator<any> }) {
         this.customValidators = customValidators;
     }
 
-    private validator(func: Validator) {
+    private validator(func: Validator<any>) {
         this.validators.push(func);
     }
 
@@ -145,6 +138,7 @@ class validatorsImpl implements Validators {
         options = options || {};
         this.validator(function (ctx, value: string, field, next) {
             if (value === undefined || value === null || typeof value === 'string') {
+                if (!value) return next();
                 if (options.trim) {
                     value = value.trim();
                 }
@@ -287,18 +281,24 @@ class validatorsImpl implements Validators {
 }
 
 module.exports.checks = function checks(): Validators {
-    return new validatorsImpl(_customValidators);
+    return new Validators(_customValidators);
 }
 
-module.exports.registerCustomValidator =  function registerCustomValidator(name: string, ctor: (options: any) => Validator) {
+module.exports.registerCustomValidator =  function registerCustomValidator(name: string, ctor: (options: any) => Validator<any>) {
     _customValidators[name] = ctor;
 }
 
-module.exports.newObjectValidator = function newObjectValidator(schema: any):
+module.exports.newObjectValidator = function newObjectValidator(schema: any, config?: ValidatorConfig):
     (obj: any) => Promise<boolean | ValidationResult> {
 
     if (!schema) {
         throw new Error('Schema is required')
+    }
+
+    if (!config) {
+        config = {
+            trimBody: true
+        }
     }
 
     return value => {
@@ -311,11 +311,13 @@ module.exports.newObjectValidator = function newObjectValidator(schema: any):
             path: '',
             errors: {}
         };
-        return _validateObject(context, schema);
+        return _validateObject(context, schema, config);
     };
 }
 
-module.exports.newRequestBodyValidator = function newRequestBodyValidator(schema, onSuccess: OnRequestSuccess, onError: OnRequestError) {
+module.exports.newRequestBodyValidator = function newRequestBodyValidator(
+        schema: any, onSuccess?: OnRequestSuccess, onError?: OnRequestError, config?: ValidatorConfig) {
+
     if (!schema) {
         throw new Error('Schema is required')
     }
@@ -329,6 +331,11 @@ module.exports.newRequestBodyValidator = function newRequestBodyValidator(schema
         onError = function (req, res, next, result, ctx) {
             res.status(400).json(result.errors);
         };
+    }
+    if (!config) {
+        config = {
+            trimBody: true
+        }
     }
     return (request, response, next) => {
 
@@ -345,16 +352,16 @@ module.exports.newRequestBodyValidator = function newRequestBodyValidator(schema
             response: response
         };
 
-        _validateObject(context, schema)
+        _validateObject(context, schema, config)
             .then(() => onSuccess(request, response, next, context))
             .catch((errors) => onError(request, response, next, errors, context));
     };
 }
 
-function _validateObject(ctx: Context, schema): Promise<ValidationResult> {
+function _validateObject(ctx: Context, schema, config: ValidatorConfig): Promise<ValidationResult> {
 
     const validations: ValidatorResult[] = [];
-
+    
     let keys = Object.keys(ctx.current);
     for (let field in schema) {
         
@@ -366,7 +373,7 @@ function _validateObject(ctx: Context, schema): Promise<ValidationResult> {
         let schemaVal = schema[field];
         if (!schemaVal) continue;
 
-        if (schemaVal instanceof validatorsImpl) {
+        if (schemaVal instanceof Validators) {
             let context = shallowCopy(ctx);
 
             context.path = context.path + field;
@@ -386,7 +393,7 @@ function _validateObject(ctx: Context, schema): Promise<ValidationResult> {
         throw new Error('Not implemented');
     }
     
-    if (keys.length) {
+    if (config.trimBody && keys.length) {
         // found keys not in schema. removing from object
         keys.forEach(key => delete ctx.current[key]);
     }
