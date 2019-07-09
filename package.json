@@ -3,6 +3,7 @@
   "version": "0.0.1",
   "description": "A basic validator for nodejs and express.",
   "main": "dist/index.js",
+  "private": false,
   "scripts": {
     "clean": "rm -rf dist",
     "build": "tsc",
